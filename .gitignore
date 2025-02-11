@@ -1,0 +1,7 @@
+/.venv/
+/img/*.png
+/logs/fit/
+/weight/*.h5
+train_dat.npy
+.idea/
+.DS_Store
