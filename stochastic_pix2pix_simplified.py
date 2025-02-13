@@ -14,8 +14,10 @@ from tensorflow.python.keras.utils.np_utils import to_categorical
 
 from tensorflow.python.keras.engine import data_adapter
 
+
 def _is_distributed_dataset(ds):
     return isinstance(ds, data_adapter.input_lib.DistributedDatasetSpec)
+
 
 data_adapter._is_distributed_dataset = _is_distributed_dataset
 
@@ -23,7 +25,8 @@ data_adapter._is_distributed_dataset = _is_distributed_dataset
 weight_JS = 1  # weight for Jensen Shannon divergence
 weight_well = 2  # weight for well data
 weight_seismic = 1  # weight for seismic
-epochs = 600
+epochs = 1000
+
 weight_dir = './weight/'
 img_dir = './img/'
 log_dir = "logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -55,11 +58,11 @@ class StochasticPix2pix:
         # weight optimization param
 
         lr_schedule = ExponentialDecay(
-            initial_learning_rate=1e-3,
-            decay_steps=epochs,
+            initial_learning_rate=8e-4,
+            decay_steps=4,
             decay_rate=0.9)
-        optimizer = Adam(lr_schedule, 0.9, amsgrad=True)
 
+        optimizer = Adam(learning_rate=0.0008, beta_1=0.9)
 
         # Build and compile the discriminator
         self.discriminator = self.build_discriminator()
@@ -127,8 +130,6 @@ class StochasticPix2pix:
         combine = Concatenate()([d0, random_layer])
         # input well data
         well = Input(shape=self.img_shape1)
-        # combine all 3 inputs
-        # combine=Concatenate(axis=-1)([well,combine])
         combine = Concatenate()([well, combine])
         # Encoder-Decoder Structure
         d1 = conv2d(combine, self.gf, bn=False)
@@ -173,28 +174,19 @@ class StochasticPix2pix:
         d1 = d_layer(img_A, self.df, bn=False)  # 128
         d2 = d_layer(d1, self.df * 2)  # 64
         d3 = d_layer(d2, self.df * 4)  # 32
-        # Force output between 0 and 1
-        #        validity = Conv2D(1, kernel_size=4, strides=1, padding='same', activation='sigmoid')(d3)
         d3 = Flatten()(d3)
         validity = Dense(1, activation='sigmoid')(d3)
         return Model(img_A, validity)
 
     def train(self, epochs):
         summary_writer = tf.summary.create_file_writer(log_dir)
-        # Adversarial loss ground truths
-        # batch_size = self.batch_size
-        #        valid = np.ones((batch_size,) + self.disc_patch)
-        #        fake = np.zeros((batch_size,) + self.disc_patch)
-        # valid = np.ones(batch_size)
-        # fake = np.zeros(batch_size)
-        # load training images      
         imgs = np.load('train_dat.npy')
         imgs_B_all = imgs.copy()
         imgs_B_all[imgs <= 0] = 0
         imgs_B_all[imgs > 0] = 1
         imgs_A_all = imgs[:, :, :, 0].copy()
 
-        batch_size = imgs_B_all.shape[0]
+        batch_size = imgs_B_all.shape[0] // 128
         valid = np.ones(batch_size)
         fake = np.zeros(batch_size)
 
@@ -210,89 +202,20 @@ class StochasticPix2pix:
         # one-hot encoding for training images
         imgs_A_all = to_categorical(imgs_A_all, self.channels)
         ids = np.arange(imgs_B_all.shape[0])
-
         # res_all = np.random.normal(0, 1, size=(imgs_B_all.shape[0], self.latent))
 
         # start of training
         for jj in range(epochs):
 
-            # imgs_A = imgs_A_all[ids[int(1 * batch_size):int(2 * batch_size)]]
-            # imgs_B = imgs_B_all[ids[int(1 * batch_size):int(2 * batch_size)]]
-            # well = well_all[ids[int(1 * batch_size):int(2 * batch_size)]]
-            # self.generate_images(imgB=imgs_B[0:1, :, :, :], imgA=imgs_A[0], well=well[0:1])
-            #
-            # # for step in range(batch_size//2):
-            # # generate random latent input variables
-            # res_all = np.random.normal(0, 1, size=(imgs_B_all.shape[0], self.latent))
-            #
-            # np.random.shuffle(ids)
-            # for ii in np.arange(imgs_B_all.shape[0] // batch_size):
-            #     # divide training data according to their batch size
-            #     imgs_A = imgs_A_all[ids[int(ii * batch_size):int((ii + 1) * batch_size)]]
-            #     imgs_B = imgs_B_all[ids[int(ii * batch_size):int((ii + 1) * batch_size)]]
-            #     well_dat = well_dat_all[ids[int(ii * batch_size):int((ii + 1) * batch_size)]]
-            #     well = well_all[ids[int(ii * batch_size):int((ii + 1) * batch_size)]]
-            #     res = res_all[ids[int(ii * batch_size):int((ii + 1) * batch_size)]]
-            #
-            #     # ---------------------
-            #     #  Train Discriminator
-            #     # ---------------------
-            #     # generate fake realization and its associated conditioning data
-            #     fake_A, fake_well, fake_seismic = self.generator.predict([imgs_B, res, well])
-            #
-            #     # train discriminator to calculate J-S divergence
-            #     d_loss_real = self.discriminator.train_on_batch(imgs_A, valid)
-            #     d_loss_fake = self.discriminator.train_on_batch(fake_A, fake)
-            #     d_loss = 1 * np.add(d_loss_real, d_loss_fake)
-            #
-            #     # -----------------
-            #     #  Train Generator
-            #     # -----------------
-            #
-            #     # Train the generators
-            #     g_loss = self.combined.train_on_batch([imgs_B, res, well], [valid, well_dat, imgs_B[:, :, :, 0]])
-            #
-            #     fake_well = np.argmax(fake_well, axis=-1)
-            #     well_dat2 = np.argmax(well_dat, axis=-1)
-            #     error = np.sum((fake_well != well_dat2)) / fake_well.shape[0]
-            #
-            #     with summary_writer.as_default():
-            #         tf.summary.scalar('d_loss', d_loss[0], step=jj + 1)
-            #         tf.summary.scalar('d_acc', 100 * d_loss[1], step=jj + 1)
-            #         tf.summary.scalar('g_loss', g_loss[0], step=jj + 1)
-            #         tf.summary.scalar('well error', error * 10, step=jj + 1)
-            #
-            #     # output the training progress
-            #     if ii % 20 == 0:
-            #         # calculate well data mismatch
-            #         # print("[Epoch %d,%d (step: %d)] [D loss: %f, D acc: %3d%%] [G loss: %f][well error:%3d%%] " % (
-            #         # jj + 1, epochs, step + 1,
-            #         # d_loss[0], 100 * d_loss[1],
-            #         # g_loss[0], error * 10))
-            #
-            #         print("[Epoch %d,%d] [D loss: %f, D acc: %3d%%] [G loss: %f][well error:%3d%%] " % (
-            #             jj + 1, epochs,
-            #             d_loss[0], 100 * d_loss[1],
-            #             g_loss[0], error * 10))
-            #
-            #     # save generated image samples
-            #     if ii == 0:
-            #         self.save_imgs(jj, imgB=imgs_B[0:1, :, :, :], imgA=imgs_A[0], well=well[0:1])
-            #     # save weight and training process
-            # imgs_A = imgs_A_all[ids[int(1 * batch_size):int(2 * batch_size)]]
-            # imgs_B = imgs_B_all[ids[int(1 * batch_size):int(2 * batch_size)]]
-            # well = well_all[ids[int(1 * batch_size):int(2 * batch_size)]]
-
-            res_all = np.random.normal(0, 1, size=(imgs_B_all.shape[0], self.latent))
             np.random.shuffle(ids)
-
+            res_all = np.random.normal(0, 1, size=(imgs_B_all.shape[0], self.latent))
             B = imgs_B_all[ids]
             A = imgs_A_all[ids]
             W = well_all[ids]
             D = well_dat_all[ids]
             R = res_all[ids]
 
-            for ii in np.arange(B.shape[0] // batch_size):
+            for ii in np.arange(imgs_B_all.shape[0] // batch_size):
                 part_B = B[batch_size * ii:batch_size * (ii + 1)]
                 part_A = A[batch_size * ii:batch_size * (ii + 1)]
                 part_W = W[batch_size * ii:batch_size * (ii + 1)]
@@ -330,9 +253,9 @@ class StochasticPix2pix:
             # save generated image samples
             self.save_imgs(jj, imgB=B[0:1, :, :, :], imgA=A[0], well=W[0:1])
 
-        # self.generator.save_weights(weight_dir + 'pos_predictor_full_seismic_filt2_sand_whole2.weights.h5')
-        # self.combined.save_weights(weight_dir + 'pos_combined_full_seismic_filt2_sand_whole2.weights.h5')
-        # self.discriminator.save_weights(weight_dir + 'pos_discriminator_full_seismic_filt2_sand_whole2.weights.h5')
+        self.generator.save_weights(weight_dir + 'pos_predictor_full_seismic_filt2_sand_whole2.weights.h5')
+        self.combined.save_weights(weight_dir + 'pos_combined_full_seismic_filt2_sand_whole2.weights.h5')
+        self.discriminator.save_weights(weight_dir + 'pos_discriminator_full_seismic_filt2_sand_whole2.weights.h5')
 
     def generate_images(self, imgA, imgB, well):
         plt.close('all')
@@ -356,6 +279,7 @@ class StochasticPix2pix:
         res = np.random.normal(0, 1, size=[1, self.latent])
         fake_A, fake_well, seismic = self.generator.predict([imgB, res, well])
         plt.subplot(1, 4, 3)
+        z = np.argmax(fake_A[0, :, :, :], axis=-1)
         plt.imshow(np.argmax(fake_A[0, :, :, :], axis=-1))
         plt.title('Realization2')
         plt.axis('off')
